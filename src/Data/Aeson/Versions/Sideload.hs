@@ -16,9 +16,11 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 
+
 module Data.Aeson.Versions.Sideload where
 
 import Control.Arrow
+import Control.Monad
 
 import Data.Aeson
 import Data.Aeson.Types
@@ -102,9 +104,37 @@ instance KnownMap xs => KnownMap ( '(a, b) ': xs ) where
 
 data Full deps a  = Full a (EntityMapList deps)
 
+infixr :^:
+
+data InflateList :: [Type] -> Type where
+  InflateNil :: InflateList '[]
+  (:^:) :: (Id a -> IO a) -> InflateList as -> InflateList ( a ': as )
+
+infixr :-:
+
+data DependenciesList :: [Type] -> Type where
+  DependenciesNil :: DependenciesList '[]
+  (:-:) :: [Id a] -> DependenciesList as -> DependenciesList ( a ': as)
+
 class (AllSatisfy (DepsMatch' (a ': deps)) (Values (Support a))) => Inflatable deps a where
     type Support a :: [(Version Nat Nat, [(Type, Version Nat Nat)])]
-    inflate :: a -> IO (Full deps a)
+    dependencies :: a -> DependenciesList deps
+    inflaters :: Proxy a -> InflateList deps
+
+makeEntityMapList :: forall xs .
+                     (AllSatisfy (Ord' :.$$$ Id') xs) =>
+                     InflateList xs -> DependenciesList xs -> IO (EntityMapList xs)
+makeEntityMapList InflateNil DependenciesNil = return EntityMapNil
+makeEntityMapList (inflater :^: restInflate) (dependencies' :-: restDepends) = do
+  these <- forM dependencies' $ \eId -> do
+             inflated <- inflater eId
+             return (eId, inflated)
+  rest <- makeEntityMapList restInflate restDepends
+  return $ EntityMapCons (M.fromList these) rest
+
+inflate :: forall deps a .
+           (Inflatable deps a, AllSatisfy (Ord' :.$$$ Id') deps) => a -> IO (Full deps a)
+inflate a = Full a <$> makeEntityMapList (inflaters (Proxy @a)) (dependencies a)
 
 type family Lookup (x :: k) (xs :: [(k, v)])  :: Maybe v where
     Lookup x '[] = 'Nothing
@@ -135,6 +165,39 @@ instance ( Inflatable depTypes a
                         ]
 
 
+
+data ProxyList :: [k] -> Type where
+  ProxyNil :: ProxyList '[]
+  ProxyCons :: Proxy k -> ProxyList ks -> ProxyList ( k ': ks )
+
+class KnownList (xs :: [k]) where
+    getProxyList :: ProxyList xs
+
+instance KnownList '[] where
+    getProxyList = ProxyNil
+
+instance KnownList ks => KnownList (k ': ks) where
+    getProxyList = ProxyCons Proxy getProxyList
+
+collapseProxyList :: forall vs a .
+                     (AllSatisfy KnownVersion' vs
+                     ,AllSatisfy (HasVersion' FailableToJSON a) vs
+                     ) =>
+                     ProxyList (vs :: [Version Nat Nat]) -> [(Version Integer Integer, Serializer a)]
+collapseProxyList ProxyNil = []
+collapseProxyList (ProxyCons p rest) = (getSerializer p) : (collapseProxyList rest)
+
+instance (Inflatable deps a
+         ,vs ~ Keys (Support a)
+         ,KnownList vs
+         ,AllSatisfy KnownVersion' vs
+         ,AllSatisfy (HasVersion' FailableToJSON (Full deps a)) vs
+         ) => SerializedVersion (Full deps a) where
+    serializers = let pList = getProxyList :: ProxyList vs
+                  in M.fromList (collapseProxyList pList)
+
+
+
 ---------------------------
 -- Typeclass boilerplate --
 ---------------------------
@@ -149,6 +212,11 @@ data HasVersion'' :: c -> (a ~> (Version Nat Nat) ~> Constraint) where
 
 type instance Apply (HasVersion'' c) a = HasVersion' c a
 
+data HasVersionFlipped' :: c -> (Version Nat Nat) -> (a ~> Constraint) where
+    HasVersionFlipped' :: HasVersionFlipped' c v a
+
+type instance Apply (HasVersionFlipped' c v) a = HasVersion c a v
+
 data DepsMatch' :: [a] -> TyFun [(a, b)] Constraint -> Type where
    DepsMatch' :: DepsMatch' deps depMap
 
@@ -158,6 +226,11 @@ data Show' :: a ~> Constraint where
     Show' :: Show' a
 
 type instance Apply Show' a = Show a
+
+data Ord' :: a ~> Constraint where
+    Ord' :: Ord' a
+
+type instance Apply Ord' a = Ord a
 
 data Id' :: a ~> Type where
     Id' :: Id' a
@@ -173,3 +246,8 @@ data KnownSymbol' :: Symbol ~> Constraint where
   KnownSymbol' :: KnownSymbol' a
 
 type instance Apply KnownSymbol' a = KnownSymbol a
+
+data KnownVersion' :: Version Nat Nat ~> Constraint where
+  KnownVersion' :: KnownVersion' v
+
+type instance Apply KnownVersion' v = KnownVersion v

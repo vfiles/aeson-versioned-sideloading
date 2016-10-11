@@ -39,7 +39,7 @@ packages:
 - '.'
 - location:
     git: https://github.com/vfiles/aeson-versioned
-    commit: 9c0d63bda6fbf08a7fbbc351ee9a6c71b8cd6ac0
+    commit: e048abddfa1295c6058e55906bd83898fe26a073
   extra-dep: true
 - location:
     git: https://github.com/goldfirere/th-desugar.git
