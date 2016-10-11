@@ -63,8 +63,20 @@ instance ToJSON (Tagged V1 Media) where
                                                  ]
 
 instance Inflatable '[User] Media where
-    type Support Media = '[ '(V1, '[ '(Media, V1), '( User, V1)])]
-    inflate m@(Media mid pid cap) = return . Full m $ EntityMapCons (M.fromList [(pid, User pid "ben")]) EntityMapNil
+    type Support Media = '[ '(V1, '[ '( Media, V1)
+                                   , '( User, V1)
+                                   ]
+                             )
+                          , '(V2, '[ '( Media, V1)
+                                   , '( User, V1)
+                                   ]
+                             )
+                          ]
+
+    dependencies (Media mid pid cap) = [pid] :-: DependenciesNil
+
+    inflaters _ = inflatePerson :^: InflateNil
+        where inflatePerson pid = return $ User pid "ben"
 
 
 instance ToJSON (Tagged V1 User) where
@@ -91,11 +103,10 @@ type instance EntityName Vfile = "Vfile"
 
 instance Inflatable '[User, Media] Vfile where
     type Support Vfile = '[ '(V1, '[ '(Vfile, V1), '(User, V1), '(Media, V1)])]
-    inflate v@(Vfile vid pid title mids) = do
-      person <- inflatePerson pid
-      medias <- sequence $ (\mid -> do m <- inflateMedia mid; return (mid, m)) <$> mids
-      return . Full v $ EntityMapCons (M.fromList [(pid, person)]) (EntityMapCons (M.fromList medias) EntityMapNil)
 
+    dependencies (Vfile _ pid _ mids) = [pid] :-: mids :-: DependenciesNil
+
+    inflaters _ = inflatePerson :^: inflateMedia :^: InflateNil
         where inflatePerson pid = return $ User pid "ben"
               inflateMedia mid = return $ Media mid (UserId 1) "caption"
 
