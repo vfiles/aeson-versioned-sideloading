@@ -198,47 +198,38 @@ instance (Inflatable deps a
 -- *class boilerplate --
 ---------------------------
 
-data  HasVersion' :: c -> a -> (TyFun (Version Nat Nat) Constraint -> *) where
-  HasVersion' :: HasVersion' c a v
+data  HasVersion' :: c -> a -> (TyFun (Version Nat Nat) Constraint -> *)
 
 type instance Apply (HasVersion' c a) v = HasVersion c a v
 
-data HasVersion'' :: c -> (TyFun a (TyFun (Version Nat Nat) Constraint -> *) -> *) where
-  HasVersion'' :: HasVersion'' c a
+data HasVersion'' :: c -> (TyFun a (TyFun (Version Nat Nat) Constraint -> *) -> *)
 
 type instance Apply (HasVersion'' c) a = HasVersion' c a
 
-data DepsMatch' :: [a] -> TyFun [(a, b)] Constraint -> * where
-   DepsMatch' :: DepsMatch' deps depMap
+data DepsMatch' :: [a] -> TyFun [(a, b)] Constraint -> *
 
 type instance Apply (DepsMatch' deps) depMap = DepsMatch deps depMap
 
-data Show' :: TyFun a Constraint -> * where
-    Show' :: Show' a
+data Show' :: TyFun a Constraint -> *
 
 type instance Apply Show' a = Show a
 
-data Id' :: TyFun a * -> * where
-    Id' :: Id' a
+data Id' :: TyFun a * -> *
 
 type instance Apply Id' a = Id a
 
-data Ord' :: TyFun a Constraint -> * where
-    Ord' :: Ord' a
+data Ord' :: TyFun a Constraint -> *
 
 type instance Apply Ord' a = Ord a
 
-data EntityName' :: TyFun a Symbol -> * where
-    EntityName' :: EntityName' a
+data EntityName' :: TyFun a Symbol -> *
 
 type instance Apply EntityName' a = EntityName a
 
-data KnownSymbol' :: TyFun Symbol Constraint -> * where
-  KnownSymbol' :: KnownSymbol' a
+data KnownSymbol' :: TyFun Symbol Constraint -> *
 
 type instance Apply KnownSymbol' a = KnownSymbol a
 
-data KnownVersion' :: TyFun (Version Nat Nat) Constraint -> * where
-  KnownVersion' :: KnownVersion' v
+data KnownVersion' :: TyFun (Version Nat Nat) Constraint -> *
 
 type instance Apply KnownVersion' v = KnownVersion v
