@@ -10,10 +10,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE StandaloneDeriving #-}
-{-# LANGUAGE TypeInType #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE UndecidableSuperClasses #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
 
 module Data.Aeson.Versions.SideloadSpec where
@@ -27,6 +24,8 @@ import Data.Aeson.Versions.Sideload
 import qualified Data.Map as M
 
 import Data.Tagged
+
+import qualified Data.ByteString.Lazy.Char8 as B
 
 newtype UserId = UserId Integer deriving (Ord, Eq, Show)
 newtype VfileId = VfileId Integer deriving (Ord, Eq, Show)
@@ -112,6 +111,6 @@ spec = do
   describe "serializers" $ do
     it "does the dependencies" $ do
       inflated <- inflate someMedia
-      case mToJSON (Tagged @V1 inflated) of
-        Just value -> return ()
+      case encode <$> mToJSON (Tagged inflated :: Tagged V1 (Full '[User] Media)) of
+        Just value -> B.putStrLn value
         Nothing -> error "failed to serialize!"

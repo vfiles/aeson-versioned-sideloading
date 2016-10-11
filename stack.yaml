@@ -15,7 +15,7 @@
 # resolver:
 #  name: custom-snapshot
 #  location: "./custom-snapshot.yaml"
-resolver: lts-7.3
+resolver: nightly-2016-03-29
 
 # User packages to be built.
 # Various formats can be used as shown in the example below.
@@ -40,10 +40,6 @@ packages:
 - location:
     git: https://github.com/vfiles/aeson-versioned
     commit: 9c0d63bda6fbf08a7fbbc351ee9a6c71b8cd6ac0
-  extra-dep: true
-- location:
-    git: https://github.com/goldfirere/th-desugar.git
-    commit: 2b848e744ca137184c2c6843faae342c24c7591b
   extra-dep: true
 # Dependency packages to be pulled from upstream that are not in the resolver
 # (e.g., acme-missiles-0.3)
@@ -73,4 +69,3 @@ extra-package-dbs: []
 #
 # Allow a newer minor version of GHC than the snapshot specifies
 # compiler-check: newer-minor
-compiler: ghc-8.1.20161008
