@@ -12,6 +12,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE PartialTypeSignatures #-}
 
 module Data.Aeson.Versions.SideloadSpec where
 
@@ -20,6 +21,8 @@ import Test.Hspec
 import Data.Aeson
 import Data.Aeson.Versions
 import Data.Aeson.Versions.Sideload
+
+import Data.Functor.Identity
 
 import qualified Data.Map as M
 
@@ -43,7 +46,7 @@ instance ToJSON VfileId where
 
 data User = User { userId :: UserId
                  , userName :: String
-                 } deriving (Show)
+                 } deriving (Eq, Show)
 
 type instance Id User = UserId
 type instance EntityName User = "User"
@@ -51,7 +54,7 @@ type instance EntityName User = "User"
 data Media = Media { mediaId :: MediaId
                    , mediaOwner :: UserId
                    , mediaCaption :: String
-                   } deriving (Show)
+                   } deriving (Eq, Show)
 
 type instance Id Media = MediaId
 type instance EntityName Media = "Media"
@@ -89,13 +92,13 @@ data Vfile = Vfile { vfileId :: VfileId
                    , vfileOwner :: UserId
                    , vfileTitle :: String
                    , vfileMedia :: [MediaId]
-                   }
+                   } deriving (Eq, Show)
 
 instance ToJSON (Tagged V1 Vfile) where
     toJSON (Tagged (Vfile vid mid title mids)) = object [ "vfileId" .= vid
                                                         , "ownerId" .= mid
                                                         , "title" .= title
-                                                        , "media" .= mids
+                                                        , "mediaIds" .= mids
                                                         ]
 
 type instance Id Vfile = VfileId
@@ -110,18 +113,74 @@ instance Inflatable '[User, Media] Vfile where
         where inflatePerson pid = return $ User pid "ben"
               inflateMedia mid = return $ Media mid (UserId 1) "caption"
 
+
+data FeedEvent = LikedVfile UserId VfileId
+               | FiledMedia UserId MediaId VfileId deriving (Eq, Show)
+
+instance ToJSON (Tagged V1 FeedEvent) where
+  toJSON (Tagged (LikedVfile uid vid)) = object [ "type" .= ("LikedVfile" :: String)
+                                                , "data" .= object
+                                                  [ "userId" .= uid
+                                                  , "vfileId" .= vid
+                                                  ]
+                                                ]
+  toJSON (Tagged (FiledMedia uid mid vid)) = object [ "type" .= ("FiledMedia" :: String)
+                                                    , "data" .= object
+                                                      [ "userId" .= uid
+                                                      , "mediaId" .= mid
+                                                      , "vfileId" .= vid
+                                                      ]
+                                                    ]
+
+instance Inflatable '[User, Media, Vfile] FeedEvent where
+  type Support FeedEvent = '[ '(V1, '[ '(FeedEvent, V1)
+                                     , '(User, V1)
+                                     , '(Media, V1)
+                                     , '(Vfile, V1)
+                                     ])]
+  dependencies (LikedVfile uid vid) = [uid] :-: [] :-: [vid] :-: DependenciesNil
+  dependencies (FiledMedia uid mid vid) = [uid] :-: [mid] :-: [vid] :-: DependenciesNil
+
+
+  inflaters _ = inflatePerson :^: inflateMedia :^: inflateVfile :^: InflateNil
+      where inflatePerson pid = return $ User pid "ben"
+            inflateMedia mid = return $ Media mid (UserId 1) "caption"
+            inflateVfile vid = return $ Vfile vid (UserId 1) "vfile caption" [MediaId 1]
+
 someMedia :: Media
 someMedia = Media (MediaId 1) (UserId 1) "caption"
 
 someVfile :: Vfile
 someVfile = Vfile (VfileId 1) (UserId 1) "vfile title" [MediaId 1, MediaId 2]
 
+someFeedEvents :: [FeedEvent]
+someFeedEvents = [LikedVfile (UserId 1) (VfileId 1)
+                 ,FiledMedia (UserId 1) (MediaId 1) (VfileId 1)
+                 ]
 
 spec :: Spec
 spec = do
   describe "serializers" $ do
     it "does the dependencies" $ do
       inflated <- inflate someMedia
-      case encode <$> mToJSON (Tagged inflated :: Tagged V1 (Full '[User] Media)) of
+      case encode <$> mToJSON (Tagged inflated :: Tagged V1 _) of
+        Just value -> B.putStrLn value
+        Nothing -> error "failed to serialize!"
+    it "does multiples!" $ do
+      inflated <- inflate [someMedia]
+      case encode <$> mToJSON (Tagged inflated :: Tagged V1 _) of
+        Just value -> B.putStrLn value
+        Nothing -> error "failed to serialize!"
+    it "merges dependnecies properly" $ do
+      inflated@(Full _ deps) <- inflate someFeedEvents
+      deps `shouldBe` ((M.fromList [(UserId 1, User (UserId 1) "ben")])
+                       `EntityMapCons`
+                       (M.fromList [(MediaId 1, Media (MediaId 1) (UserId 1) "caption")])
+                       `EntityMapCons`
+                       (M.fromList [(VfileId 1, Vfile (VfileId 1) (UserId 1) "vfile caption" [MediaId 1])])
+                       `EntityMapCons`
+                       EntityMapNil
+                      )
+      case encode <$> mToJSON (Tagged inflated :: Tagged V1 _) of
         Just value -> B.putStrLn value
         Nothing -> error "failed to serialize!"

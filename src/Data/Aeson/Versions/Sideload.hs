@@ -25,9 +25,13 @@ import Data.Aeson.Versions
 import Data.Proxy
 import Data.Tagged
 
+import Data.Foldable
+
 import Data.Singletons
 import Data.Singletons.Prelude hiding (Id, Lookup)
-import Data.Singletons.Prelude.Maybe
+import Data.Singletons.Prelude.Maybe hiding (CatMaybes)
+
+import Data.Monoid
 
 import qualified Data.Text as T
 
@@ -45,9 +49,14 @@ import GHC.TypeLits
 type family Id (a :: *) :: *
 type family EntityName (a :: *) :: Symbol
 
+infixr `EntityMapCons`
+
 data EntityMapList (l :: [*]) where
     EntityMapNil :: EntityMapList '[]
     EntityMapCons :: M.Map (Id a) a -> EntityMapList ls -> EntityMapList (a ': ls )
+
+deriving instance (AllSatisfy (TyCon1 Eq) ks, AllSatisfy (TyCon1 Eq :.$$$ Id') ks) => (Eq (EntityMapList ks))
+deriving instance (AllSatisfy Show' ks, AllSatisfy (Show' :.$$$ Id') ks) => (Show (EntityMapList ks))
 
 data SMap :: [(a, b)] -> * where
    SMapNil :: SMap '[]
@@ -112,10 +121,43 @@ data DependenciesList :: [*] -> * where
   DependenciesNil :: DependenciesList '[]
   (:-:) :: [Id a] -> DependenciesList as -> DependenciesList ( a ': as)
 
+instance Monoid (DependenciesList '[]) where
+  mempty = DependenciesNil
+  mappend _ _ = DependenciesNil
+
+instance Monoid (DependenciesList deps) => Monoid (DependenciesList ( d ': deps)) where
+  mempty = mempty :-: mempty
+  mappend (a :-: restA) (b :-: restB) = (a <> b) :-: (restA <> restB)
+
+
 class (AllSatisfy (DepsMatch' (a ': deps)) (Values (Support a))) => Inflatable deps a where
     type Support a :: [(Version Nat Nat, [(*, Version Nat Nat)])]
     dependencies :: a -> DependenciesList deps
     inflaters :: Proxy a -> InflateList deps
+
+type family SupportBase a where
+  SupportBase (t a) = Support a
+  SupportBase a = Support a
+
+class (AllSatisfy (DepsMatch' (baseType ': deps)) (Values (SupportBase a))) => InflatableBase deps baseType a where
+    dependenciesBase :: Proxy baseType -> a -> DependenciesList deps
+    inflatersBase :: Proxy baseType -> Proxy a -> InflateList deps
+
+instance (AllSatisfy (DepsMatch' (a ': deps)) (Values (SupportBase a))
+         ,Inflatable deps a) => InflatableBase deps a a where
+    dependenciesBase _ = dependencies
+    inflatersBase _ = inflaters
+
+
+instance (AllSatisfy (DepsMatch' (a ': deps)) (Values (SupportBase (t a)))
+         ,InflatableBase deps a a
+         ,Functor t
+         ,Foldable t
+         ,Monoid (DependenciesList deps)) => InflatableBase deps a (t a) where
+
+  inflatersBase pBase _ = inflatersBase pBase (Proxy :: Proxy a)
+
+  dependenciesBase pBase = fold . fmap (dependenciesBase pBase)
 
 makeEntityMapList :: forall xs .
                      (AllSatisfy (Ord' :.$$$ Id') xs) =>
@@ -128,20 +170,20 @@ makeEntityMapList (inflater :^: restInflate) (dependencies' :-: restDepends) = d
   rest <- makeEntityMapList restInflate restDepends
   return $ EntityMapCons (M.fromList these) rest
 
-inflate :: forall deps a .
-           (Inflatable deps a, AllSatisfy (Ord' :.$$$ Id') deps) => a -> IO (Full deps a)
-inflate a = Full a <$> makeEntityMapList (inflaters (Proxy :: Proxy a)) (dependencies a)
+inflate :: forall deps baseType a .
+           (InflatableBase deps baseType a, AllSatisfy (Ord' :.$$$ Id') deps) => a -> IO (Full deps a)
+inflate a = Full a <$> makeEntityMapList (inflatersBase (Proxy :: Proxy baseType) (Proxy :: Proxy a)) (dependenciesBase (Proxy :: Proxy baseType) a)
 
 type family Lookup (x :: k) (xs :: [(k, v)])  :: Maybe v where
     Lookup x '[] = 'Nothing
     Lookup x ( '(x, v) ': xs ) = 'Just v
     Lookup x ( '(y, v) ': ys ) = Lookup x ys
 
-instance ( Inflatable depTypes a
+instance {-# OVERLAPPABLE #-} ( InflatableBase depTypes a a
          -- ^ main type is inflatable
          , Keys (Tail deps) ~ depTypes
          , KnownMap (Tail deps)
-         , Lookup v (Support a) ~ 'Just deps
+         , Lookup v (SupportBase a) ~ 'Just deps
          -- ^ version of inflated type is supported
          , Lookup a deps ~ 'Just mainV
          , FailableToJSON (Tagged mainV a)
@@ -155,6 +197,33 @@ instance ( Inflatable depTypes a
          ) => FailableToJSON (Tagged v (Full depTypes a)) where
     mToJSON (Tagged (Full a entities)) = do
       skeletonJSON <- mToJSON (Tagged a :: Tagged mainV a)
+      depsPairs <- serializeEntityMapList (mapSing :: SMap (Tail deps)) entities
+      return . object $ [ "data" .= skeletonJSON
+                        , "depdencies" .= object depsPairs
+                        ]
+
+instance ( InflatableBase depTypes a (t a)
+         , Functor t
+         , Foldable t
+         , CatMaybes t
+         , FunctorToJSON t
+         -- ^ main type is inflatable
+         , Keys (Tail deps) ~ depTypes
+         , KnownMap (Tail deps)
+         , Lookup v (SupportBase (t a)) ~ 'Just deps
+         -- ^ version of inflated type is supported
+         , Lookup a deps ~ 'Just mainV
+         , FailableToJSON (Tagged mainV a)
+         -- ^ get version of uninflated type and make sure that it's serializable
+         , AllSatisfyKV (HasVersion'' FailableToJSON) (Tail deps)
+         -- ^ all dependencies are versioned
+         , AllSatisfy (Show' :.$$$ Id') depTypes
+         -- ^ all entities have showable ids
+         , AllSatisfy (KnownSymbol' :.$$$ EntityName') depTypes
+         -- ^ all entities have names
+         ) => FailableToJSON (Tagged v (Full depTypes (t a))) where
+    mToJSON (Tagged (Full a entities)) = do
+      skeletonJSON <- serialize mToJSON $ (\e -> (Tagged e :: Tagged mainV a)) <$> a
       depsPairs <- serializeEntityMapList (mapSing :: SMap (Tail deps)) entities
       return . object $ [ "data" .= skeletonJSON
                         , "depdencies" .= object depsPairs
@@ -183,8 +252,8 @@ collapseProxyList :: forall vs a .
 collapseProxyList ProxyNil = []
 collapseProxyList (ProxyCons p rest) = (getSerializer p) : (collapseProxyList rest)
 
-instance (Inflatable deps a
-         ,vs ~ Keys (Support a)
+instance (InflatableBase deps baseType a
+         ,vs ~ Keys (SupportBase a)
          ,KnownList vs
          ,AllSatisfy KnownVersion' vs
          ,AllSatisfy (HasVersion' FailableToJSON (Full deps a)) vs
