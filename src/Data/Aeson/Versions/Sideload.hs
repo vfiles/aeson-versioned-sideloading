@@ -21,6 +21,7 @@ import Control.Monad
 import Data.Aeson
 import Data.Aeson.Types
 import Data.Aeson.Versions
+import Data.Aeson.Versions.Internal
 
 import Data.Proxy
 import Data.Tagged
@@ -62,10 +63,6 @@ data SMap :: [(a, b)] -> * where
    SMapNil :: SMap '[]
    SMapCons :: Proxy a -> Proxy b -> SMap xs -> SMap ( '(a, b) ': xs )
 
-type family AllSatisfy (cf :: TyFun k Constraint -> *) (xs :: [k]) :: Constraint where
-    AllSatisfy cf '[] = ()
-    AllSatisfy cf ( x ': xs) = (Apply cf x, AllSatisfy cf xs)
-
 type family AllSatisfyKV (cf :: TyFun k (TyFun v Constraint -> *) -> *) (xs :: [(k, v)]) :: Constraint where
     AllSatisfyKV cf '[] = ()
     AllSatisfyKV cf ( '(k, v) ': xs ) = (Apply (Apply cf k) v, AllSatisfyKV cf xs)
@@ -80,9 +77,6 @@ type family Values (xs :: [(a, b)]) :: [b] where
 
 type family DepsMatch (deps :: [a]) (depMap :: [(a, b)]) :: Constraint where
     DepsMatch deps depMap = Keys depMap ~ deps
-
-type family HasVersion (cf :: * -> Constraint) (e :: *) (v :: Version Nat Nat) :: Constraint where
-    HasVersion cf e v = cf (Tagged v e)
 
 serializeEntityMapList :: forall depMap.
                           (AllSatisfyKV (HasVersion'' FailableToJSON) depMap
@@ -223,7 +217,7 @@ instance ( InflatableBase depTypes a (t a)
          -- ^ all entities have names
          ) => FailableToJSON (Tagged v (Full depTypes (t a))) where
     mToJSON (Tagged (Full a entities)) = do
-      skeletonJSON <- serialize mToJSON $ (\e -> (Tagged e :: Tagged mainV a)) <$> a
+      skeletonJSON <- runSerializer mToJSON $ (\e -> (Tagged e :: Tagged mainV a)) <$> a
       depsPairs <- serializeEntityMapList (mapSing :: SMap (Tail deps)) entities
       return . object $ [ "data" .= skeletonJSON
                         , "depdencies" .= object depsPairs
@@ -257,19 +251,15 @@ instance (InflatableBase deps baseType a
          ,KnownList vs
          ,AllSatisfy KnownVersion' vs
          ,AllSatisfy (HasVersion' FailableToJSON (Full deps a)) vs
+         ,ToSerializerMap (Full deps a) vs
          ) => SerializedVersion (Full deps a) where
-    serializers = let pList = getProxyList :: ProxyList vs
-                  in M.fromList (collapseProxyList pList)
+  type SerializerVersions (Full deps a) = Keys (SupportBase a)
 
 
 
 ---------------------------
 -- *class boilerplate --
 ---------------------------
-
-data  HasVersion' :: c -> a -> (TyFun (Version Nat Nat) Constraint -> *)
-
-type instance Apply (HasVersion' c a) v = HasVersion c a v
 
 data HasVersion'' :: c -> (TyFun a (TyFun (Version Nat Nat) Constraint -> *) -> *)
 

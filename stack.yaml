@@ -39,7 +39,7 @@ packages:
 - '.'
 - location:
     git: https://github.com/vfiles/aeson-versioned
-    commit: e048abddfa1295c6058e55906bd83898fe26a073
+    commit: 808d6b65ebcfaaeb6f17e059e8ed364acbfcf130
   extra-dep: true
 # Dependency packages to be pulled from upstream that are not in the resolver
 # (e.g., acme-missiles-0.3)
