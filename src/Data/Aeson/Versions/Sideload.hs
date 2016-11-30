@@ -164,6 +164,11 @@ makeEntityMapList (inflater :^: restInflate) (dependencies' :-: restDepends) = d
   rest <- makeEntityMapList restInflate restDepends
   return $ EntityMapCons (M.fromList these) rest
 
+
+inflateP :: forall deps baseType a .
+           Proxy baseType -> (InflatableBase deps baseType a, AllSatisfy (Ord' :.$$$ Id') deps) => a -> IO (Full deps a)
+inflateP _ a = Full a <$> makeEntityMapList (inflatersBase (Proxy :: Proxy baseType) (Proxy :: Proxy a)) (dependenciesBase (Proxy :: Proxy baseType) a)
+
 inflate :: forall deps baseType a .
            (InflatableBase deps baseType a, AllSatisfy (Ord' :.$$$ Id') deps) => a -> IO (Full deps a)
 inflate a = Full a <$> makeEntityMapList (inflatersBase (Proxy :: Proxy baseType) (Proxy :: Proxy a)) (dependenciesBase (Proxy :: Proxy baseType) a)
