@@ -18,6 +18,7 @@ module Data.Aeson.Versions.Sideload where
 
 import Control.Arrow
 import Control.Monad
+import Control.Monad.IO.Class
 
 import Data.Aeson
 import Data.Aeson.Types
@@ -124,10 +125,10 @@ instance Monoid (DependenciesList deps) => Monoid (DependenciesList ( d ': deps)
 
 class (AllSatisfy (DepsMatch' (a ': deps)) (Values (Support a))) => Inflatable deps a where
     type Support a :: [(Version Nat Nat, [(*, Version Nat Nat)])]
-    type InflateM a :: * -> *
-    type InflateM a = IO
+    type InflateM a :: (* -> *) -> Constraint
+    type InflateM a = MonadIO
     dependencies :: a -> DependenciesList deps
-    inflaters :: Proxy a -> InflateList (InflateM a) deps
+    inflaters :: forall m . (InflateM a m) => Proxy a -> InflateList m deps
 
 type family SupportBase a where
   SupportBase (t a) = Support a
@@ -139,7 +140,7 @@ type family InflateMBase a where
 
 class (AllSatisfy (DepsMatch' (baseType ': deps)) (Values (SupportBase a))) => InflatableBase deps baseType a where
     dependenciesBase :: Proxy baseType -> a -> DependenciesList deps
-    inflatersBase :: Proxy baseType -> Proxy a -> InflateList (InflateMBase a) deps
+    inflatersBase :: forall m . (InflateMBase a m) => Proxy baseType -> Proxy a -> InflateList m deps
 
 
 instance {-# OVERLAPPABLE #-} (AllSatisfy (DepsMatch' (a ': deps)) (Values (SupportBase a))
@@ -171,14 +172,14 @@ makeEntityMapList (inflater :^: restInflate) (dependencies' :-: restDepends) = d
   return $ EntityMapCons (M.fromList these) rest
 
 
-inflateP :: forall deps baseType a.
-            (Monad (InflateMBase a), InflatableBase deps baseType a, AllSatisfy (Ord' :.$$$ Id') deps) =>
-            Proxy baseType -> a -> (InflateMBase a) (Full deps a)
+inflateP :: forall deps baseType a m.
+            (Monad m, InflateMBase a m, InflatableBase deps baseType a, AllSatisfy (Ord' :.$$$ Id') deps) =>
+            Proxy baseType -> a -> m (Full deps a)
 inflateP _ a = Full a <$> makeEntityMapList (inflatersBase (Proxy :: Proxy baseType) (Proxy :: Proxy a)) (dependenciesBase (Proxy :: Proxy baseType) a)
 
-inflate :: forall deps baseType a.
-           (Monad (InflateMBase a), InflatableBase deps baseType a, AllSatisfy (Ord' :.$$$ Id') deps)
-           => a -> (InflateMBase a) (Full deps a)
+inflate :: forall deps baseType a m.
+           (Monad m, InflateMBase a m, InflatableBase deps baseType a, AllSatisfy (Ord' :.$$$ Id') deps)
+           => a -> m (Full deps a)
 inflate a = Full a <$> makeEntityMapList (inflatersBase (Proxy :: Proxy baseType) (Proxy :: Proxy a)) (dependenciesBase (Proxy :: Proxy baseType) a)
 
 type family Lookup (x :: k) (xs :: [(k, v)])  :: Maybe v where

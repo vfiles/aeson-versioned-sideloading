@@ -24,6 +24,7 @@ library
                      , text
                      , singletons
                      , containers
+                     , transformers
   default-language:    Haskell2010
 
 test-suite aeson-versioned-sideloading-test
