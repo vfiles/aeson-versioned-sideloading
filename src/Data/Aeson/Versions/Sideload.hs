@@ -125,33 +125,33 @@ instance Monoid (DependenciesList deps) => Monoid (DependenciesList ( d ': deps)
 
 class (AllSatisfy (DepsMatch' (a ': deps)) (Values (Support a))) => Inflatable deps a where
     type Support a :: [(Version Nat Nat, [(*, Version Nat Nat)])]
-    type InflateM a :: (* -> *) -> Constraint
-    type InflateM a = MonadIO
+    type InflateC a :: (* -> *) -> Constraint
+    type InflateC a = MonadIO
     dependencies :: a -> DependenciesList deps
-    inflaters :: forall m . (InflateM a m) => Proxy a -> InflateList m deps
+    inflaters :: forall m . (InflateC a m) => Proxy a -> InflateList m deps
 
 type family SupportBase a where
   SupportBase (t a) = Support a
   SupportBase a = Support a
 
-type family InflateMBase a where
-  InflateMBase (t a) = InflateM a
-  InflateMBase a = InflateM a
+type family InflateCBase a where
+  InflateCBase (t a) = InflateC a
+  InflateCBase a = InflateC a
 
 class (AllSatisfy (DepsMatch' (baseType ': deps)) (Values (SupportBase a))) => InflatableBase deps baseType a where
     dependenciesBase :: Proxy baseType -> a -> DependenciesList deps
-    inflatersBase :: forall m . (InflateMBase a m) => Proxy baseType -> Proxy a -> InflateList m deps
+    inflatersBase :: forall m . (InflateCBase a m) => Proxy baseType -> Proxy a -> InflateList m deps
 
 
 instance {-# OVERLAPPABLE #-} (AllSatisfy (DepsMatch' (a ': deps)) (Values (SupportBase a))
-         ,Inflatable deps a, InflateMBase a ~ InflateM a) => InflatableBase deps a a where
+         ,Inflatable deps a, InflateCBase a ~ InflateC a) => InflatableBase deps a a where
     dependenciesBase _ = dependencies
     inflatersBase _ = inflaters
 
 
 instance {-# OVERLAPPABLE #-} (AllSatisfy (DepsMatch' (a ': deps)) (Values (SupportBase (t a)))
          ,InflatableBase deps a a
-         ,InflateMBase a ~ InflateM a
+         ,InflateCBase a ~ InflateC a
          ,Functor t
          ,Foldable t
          ,Monoid (DependenciesList deps)) => InflatableBase deps a (t a) where
@@ -173,12 +173,12 @@ makeEntityMapList (inflater :^: restInflate) (dependencies' :-: restDepends) = d
 
 
 inflateP :: forall deps baseType a m.
-            (Monad m, InflateMBase a m, InflatableBase deps baseType a, AllSatisfy (Ord' :.$$$ Id') deps) =>
+            (Monad m, InflateCBase a m, InflatableBase deps baseType a, AllSatisfy (Ord' :.$$$ Id') deps) =>
             Proxy baseType -> a -> m (Full deps a)
 inflateP _ a = Full a <$> makeEntityMapList (inflatersBase (Proxy :: Proxy baseType) (Proxy :: Proxy a)) (dependenciesBase (Proxy :: Proxy baseType) a)
 
 inflate :: forall deps baseType a m.
-           (Monad m, InflateMBase a m, InflatableBase deps baseType a, AllSatisfy (Ord' :.$$$ Id') deps)
+           (Monad m, InflateCBase a m, InflatableBase deps baseType a, AllSatisfy (Ord' :.$$$ Id') deps)
            => a -> m (Full deps a)
 inflate a = Full a <$> makeEntityMapList (inflatersBase (Proxy :: Proxy baseType) (Proxy :: Proxy a)) (dependenciesBase (Proxy :: Proxy baseType) a)
 
