@@ -12,6 +12,7 @@
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE FunctionalDependencies #-}
 
 module Data.Aeson.Versions.Sideload where
 
@@ -29,14 +30,11 @@ import Data.Tagged
 import Data.Foldable
 
 import Data.Singletons
-import Data.Singletons.Prelude hiding (Id, Lookup)
-import Data.Singletons.Prelude.Maybe hiding (CatMaybes)
+import Data.Singletons.Prelude hiding (Id)
 
 import Data.Monoid
 
 import qualified Data.Text as T
-
-import qualified Data.ByteString.Lazy as B
 
 import qualified Data.Map as M
 
@@ -85,7 +83,7 @@ serializeEntityMapList :: forall depMap.
                           ) =>
                           SMap depMap -> EntityMapList (Keys depMap) -> Maybe [Pair]
 serializeEntityMapList SMapNil EntityMapNil = Just []
-serializeEntityMapList (SMapCons (ep :: Proxy e) (vp :: Proxy v) restMap) (EntityMapCons eMap rest) = do
+serializeEntityMapList (SMapCons (_ :: Proxy e) (_ :: Proxy v) restMap) (EntityMapCons eMap rest) = do
       let mserialized = mToJSON . (\a -> Tagged a :: Tagged v e) <$> eMap
       mserialized' <- M.toList . M.mapKeys show <$> sequence mserialized
       let mserialized'' = first T.pack <$> mserialized'
@@ -105,9 +103,9 @@ data Full deps a  = Full a (EntityMapList deps)
 
 infixr :^:
 
-data InflateList :: [*] -> * where
-  InflateNil :: InflateList '[]
-  (:^:) :: (Id a -> IO a) -> InflateList as -> InflateList ( a ': as )
+data InflateList :: (* -> *) -> [*] -> * where
+  InflateNil :: InflateList m '[]
+  (:^:) :: (Id a -> m a) -> InflateList m as -> InflateList m ( a ': as )
 
 infixr :-:
 
@@ -126,25 +124,33 @@ instance Monoid (DependenciesList deps) => Monoid (DependenciesList ( d ': deps)
 
 class (AllSatisfy (DepsMatch' (a ': deps)) (Values (Support a))) => Inflatable deps a where
     type Support a :: [(Version Nat Nat, [(*, Version Nat Nat)])]
+    type InflateM a :: * -> *
+    type InflateM a = IO
     dependencies :: a -> DependenciesList deps
-    inflaters :: Proxy a -> InflateList deps
+    inflaters :: Proxy a -> InflateList (InflateM a) deps
 
 type family SupportBase a where
   SupportBase (t a) = Support a
   SupportBase a = Support a
 
+type family InflateMBase a where
+  InflateMBase (t a) = InflateM a
+  InflateMBase a = InflateM a
+
 class (AllSatisfy (DepsMatch' (baseType ': deps)) (Values (SupportBase a))) => InflatableBase deps baseType a where
     dependenciesBase :: Proxy baseType -> a -> DependenciesList deps
-    inflatersBase :: Proxy baseType -> Proxy a -> InflateList deps
+    inflatersBase :: Proxy baseType -> Proxy a -> InflateList (InflateMBase a) deps
 
-instance (AllSatisfy (DepsMatch' (a ': deps)) (Values (SupportBase a))
-         ,Inflatable deps a) => InflatableBase deps a a where
+
+instance {-# OVERLAPPABLE #-} (AllSatisfy (DepsMatch' (a ': deps)) (Values (SupportBase a))
+         ,Inflatable deps a, InflateMBase a ~ InflateM a) => InflatableBase deps a a where
     dependenciesBase _ = dependencies
     inflatersBase _ = inflaters
 
 
-instance (AllSatisfy (DepsMatch' (a ': deps)) (Values (SupportBase (t a)))
+instance {-# OVERLAPPABLE #-} (AllSatisfy (DepsMatch' (a ': deps)) (Values (SupportBase (t a)))
          ,InflatableBase deps a a
+         ,InflateMBase a ~ InflateM a
          ,Functor t
          ,Foldable t
          ,Monoid (DependenciesList deps)) => InflatableBase deps a (t a) where
@@ -153,9 +159,9 @@ instance (AllSatisfy (DepsMatch' (a ': deps)) (Values (SupportBase (t a)))
 
   dependenciesBase pBase = fold . fmap (dependenciesBase pBase)
 
-makeEntityMapList :: forall xs .
-                     (AllSatisfy (Ord' :.$$$ Id') xs) =>
-                     InflateList xs -> DependenciesList xs -> IO (EntityMapList xs)
+makeEntityMapList :: forall xs m.
+                     (AllSatisfy (Ord' :.$$$ Id') xs, Monad m) =>
+                     InflateList m xs -> DependenciesList xs -> m (EntityMapList xs)
 makeEntityMapList InflateNil DependenciesNil = return EntityMapNil
 makeEntityMapList (inflater :^: restInflate) (dependencies' :-: restDepends) = do
   these <- forM dependencies' $ \eId -> do
@@ -165,12 +171,14 @@ makeEntityMapList (inflater :^: restInflate) (dependencies' :-: restDepends) = d
   return $ EntityMapCons (M.fromList these) rest
 
 
-inflateP :: forall deps baseType a .
-           Proxy baseType -> (InflatableBase deps baseType a, AllSatisfy (Ord' :.$$$ Id') deps) => a -> IO (Full deps a)
+inflateP :: forall deps baseType a.
+            (Monad (InflateMBase a), InflatableBase deps baseType a, AllSatisfy (Ord' :.$$$ Id') deps) =>
+            Proxy baseType -> a -> (InflateMBase a) (Full deps a)
 inflateP _ a = Full a <$> makeEntityMapList (inflatersBase (Proxy :: Proxy baseType) (Proxy :: Proxy a)) (dependenciesBase (Proxy :: Proxy baseType) a)
 
-inflate :: forall deps baseType a .
-           (InflatableBase deps baseType a, AllSatisfy (Ord' :.$$$ Id') deps) => a -> IO (Full deps a)
+inflate :: forall deps baseType a.
+           (Monad (InflateMBase a), InflatableBase deps baseType a, AllSatisfy (Ord' :.$$$ Id') deps)
+           => a -> (InflateMBase a) (Full deps a)
 inflate a = Full a <$> makeEntityMapList (inflatersBase (Proxy :: Proxy baseType) (Proxy :: Proxy a)) (dependenciesBase (Proxy :: Proxy baseType) a)
 
 type family Lookup (x :: k) (xs :: [(k, v)])  :: Maybe v where
