@@ -20,6 +20,8 @@ import Control.Arrow
 import Control.Monad
 import Control.Monad.IO.Class
 
+import Control.Error
+
 import Data.Aeson
 import Data.Aeson.Types
 import Data.Aeson.Versions
@@ -106,7 +108,8 @@ infixr :^:
 
 data InflateList :: (* -> *) -> [*] -> * where
   InflateNil :: InflateList m '[]
-  (:^:) :: (Id a -> m a) -> InflateList m as -> InflateList m ( a ': as )
+  (:^:) :: (Id a -> m (Maybe a)) -> InflateList m as -> InflateList m (a ': as)
+  (:^^:) :: ([Id a] -> m [(Id a, a)]) -> InflateList m as -> InflateList m ( a ': as )
 
 infixr :-:
 
@@ -165,9 +168,13 @@ makeEntityMapList :: forall xs m.
                      InflateList m xs -> DependenciesList xs -> m (EntityMapList xs)
 makeEntityMapList InflateNil DependenciesNil = return EntityMapNil
 makeEntityMapList (inflater :^: restInflate) (dependencies' :-: restDepends) = do
-  these <- forM dependencies' $ \eId -> do
-             inflated <- inflater eId
-             return (eId, inflated)
+  these <- forM dependencies' $ \eid -> runMaybeT $ do
+    inflated <- MaybeT $ inflater eid
+    return (eid, inflated)
+  rest <- makeEntityMapList restInflate restDepends
+  return $ EntityMapCons (M.fromList  $ catMaybes these) rest
+makeEntityMapList (inflater :^^: restInflate) (dependencies' :-: restDepends) = do
+  these <- inflater dependencies'
   rest <- makeEntityMapList restInflate restDepends
   return $ EntityMapCons (M.fromList these) rest
 

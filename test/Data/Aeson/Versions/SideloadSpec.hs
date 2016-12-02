@@ -79,7 +79,7 @@ instance Inflatable '[User] Media where
     dependencies (Media mid pid cap) = [pid] :-: DependenciesNil
 
     inflaters _ = inflatePerson :^: InflateNil
-        where inflatePerson pid = return $ User pid "ben"
+        where inflatePerson pid = return . Just $ User pid "ben"
 
 
 instance ToJSON (Tagged V1 User) where
@@ -110,8 +110,8 @@ instance Inflatable '[User, Media] Vfile where
     dependencies (Vfile _ pid _ mids) = [pid] :-: mids :-: DependenciesNil
 
     inflaters _ = inflatePerson :^: inflateMedia :^: InflateNil
-        where inflatePerson pid = return $ User pid "ben"
-              inflateMedia mid = return $ Media mid (UserId 1) "caption"
+        where inflatePerson pid = return . Just $ User pid "ben"
+              inflateMedia mid = return . Just $ Media mid (UserId 1) "caption"
 
 
 data FeedEvent = LikedVfile UserId VfileId
@@ -143,9 +143,9 @@ instance Inflatable '[User, Media, Vfile] FeedEvent where
 
 
   inflaters _ = inflatePerson :^: inflateMedia :^: inflateVfile :^: InflateNil
-      where inflatePerson pid = return $ User pid "ben"
-            inflateMedia mid = return $ Media mid (UserId 1) "caption"
-            inflateVfile vid = return $ Vfile vid (UserId 1) "vfile caption" [MediaId 1]
+      where inflatePerson pid = return . Just $ User pid "ben"
+            inflateMedia mid = return . Just $ Media mid (UserId 1) "caption"
+            inflateVfile vid = return . Just $ Vfile vid (UserId 1) "vfile caption" [MediaId 1]
 
 someMedia :: Media
 someMedia = Media (MediaId 1) (UserId 1) "caption"
